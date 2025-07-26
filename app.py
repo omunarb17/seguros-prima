@@ -1,3 +1,8 @@
+# Autor: Orlando Munar Benitez
+# Calculadora de Prima de Seguro de Vida
+#
+# Desarrollado con Streamlit
+
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -296,6 +301,9 @@ if not edad_valida:
 # --- Panel principal ---
 st.title("Calculadora de Prima de Seguro de Vida")
 st.markdown("""
+<p style='font-size:16px; color:#888; margin-bottom:1em;'>Autor: <b>Orlando Munar Benitez</b></p>
+""", unsafe_allow_html=True)
+st.markdown("""
 """)
 
 if st.button('Calcular Prima', disabled=not edad_valida):
@@ -319,10 +327,17 @@ st.markdown(
         background-color: #f7fafd;
     }
     .stButton>button {
-        color: white;
-        background: linear-gradient(90deg, #1e90ff 0%, #00b894 100%);
+        color: #fff !important;
+        background: linear-gradient(90deg, #1e90ff 0%, #00b894 100%) !important;
         border-radius: 8px;
         font-weight: bold;
+        border: none;
+        transition: background 0.3s;
+    }
+    .stButton>button:hover {
+        background: linear-gradient(90deg, #1565c0 0%, #00916e 100%) !important;
+        color: #fff !important;
+        border: none;
     }
     .stTabs [data-baseweb="tab"] {
         font-size: 18px;
