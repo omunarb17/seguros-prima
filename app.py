@@ -127,6 +127,106 @@ def calcular_prima(
         'debug_registros': debug_registros
     }
 
+def calcular_prima_multi(
+    edad, sexo, valor_asegurado, inflacion, interes_tecnico,
+    gastos_iniciales, gastos_administrativos, comision_anio_1, comision_anio_n,
+    forma_pago, cnt_plazo_pago, testadistica_vida, plazo, cod_tasas
+):
+    resultados = []
+    total_prima_emitida = 0
+    for cod_tasa in cod_tasas:
+        # Filtrar la tabla para el cod_tasa correspondiente
+        tabla = testadistica_vida[testadistica_vida['cod_tasa'] == cod_tasa].copy()
+        if tabla.empty:
+            continue
+        # --- Lógica igual a calcular_prima ---
+        registros = tabla[tabla['nro_edad'] >= edad].head(plazo).copy()
+        registros['contador'] = np.arange(len(registros))
+        registros['exp_1'] = (1 + inflacion / 100) ** registros['contador']
+        rentabilidad = (1 + interes_tecnico / 100) * (1 + inflacion / 100) - 1
+        registros['exp_2'] = (1 + rentabilidad) ** (registros['contador'] + 1)
+        registros['exp_lx_1'] = np.concatenate(([0], registros['exp_1'].values[1:]))
+        registros['exp_lx_2'] = np.concatenate(([0], (1 + rentabilidad) ** registros['contador'].values[1:]))
+        # Ajuste: para cod_tasa=14 o 18, usar siempre lx y dx
+        if cod_tasa in [14, 18]:
+            registros['numerador_unitario'] = registros['dx'] * (registros['exp_1'] / registros['exp_2'])
+            lx_usado = registros['lx'].values[0]
+            lx = registros['lx'].values
+        else:
+            if sexo == "Masculino":
+                registros['numerador_unitario'] = registros['dx'] * (registros['exp_1'] / registros['exp_2'])
+                lx_usado = registros['lx'].values[0]
+                lx = registros['lx'].values
+            else:
+                registros['numerador_unitario'] = registros['dx_mujer'] * (registros['exp_1'] / registros['exp_2'])
+                lx_usado = registros['lx_mujer'].values[0]
+                lx = registros['lx_mujer'].values
+        registros['numerador_acum'] = np.round(np.cumsum(registros['numerador_unitario']), 20)
+        exp_lx_1 = registros['exp_lx_1'].values
+        exp_lx_2 = registros['exp_lx_2'].values
+        denominador_unitario = np.zeros(len(registros))
+        if len(registros) > 1:
+            denominador_unitario[1:] = lx[1:] * (exp_lx_1[1:] / exp_lx_2[1:])
+        registros['denominador_unitario'] = denominador_unitario
+        registros['denominador_acum'] = np.round(np.cumsum(denominador_unitario), 20)
+        numerador_final = np.round(registros['numerador_acum'].iloc[-1], 20)
+        if cnt_plazo_pago == 0:
+            denominador_final = np.round(registros['denominador_acum'].iloc[-1], 20)
+        else:
+            fila_limite = registros[registros['contador'] == (cnt_plazo_pago - 1)]
+            if not fila_limite.empty:
+                denominador_final = np.round(fila_limite['denominador_acum'].values[0], 20)
+            else:
+                denominador_final = np.round(registros['denominador_acum'].iloc[-1], 20)
+        tasa_pura_basica = numerador_final / denominador_final if denominador_final != 0 else 0
+        gi = gastos_iniciales / 100
+        ga = gastos_administrativos / 100
+        c1 = comision_anio_1 / 100
+        cn = comision_anio_n / 100
+        f_1 = np.round((1 - c1 - gi - ga) * lx_usado, 20)
+        f_n = np.round((1 - cn - gi - ga) * denominador_final, 20)
+        denominador_comercial = np.round(f_1 + f_n, 20)
+        tasa_comercial = np.round(numerador_final / denominador_comercial, 5) if denominador_comercial != 0 else 0
+        cod_forma_pago = next(x['cod'] for x in tipos_pago if x['desc'] == forma_pago)
+        divisor = {1: 1, 2: 2, 4: 4, 6: 12}[cod_forma_pago]
+        factor = {1: 0, 2: 0.06, 4: 0.08, 6: 0.12}[cod_forma_pago]
+        tasa_comercial_fracc = np.round((tasa_comercial / divisor) * (1 + factor) * divisor, 8)
+        prima_comercial_anual = np.round(valor_asegurado * tasa_comercial, 2)
+        prima_comercial_fracc = np.round((prima_comercial_anual / divisor) * (1 + factor) * divisor, 2)
+        total_prima_emitida += prima_comercial_fracc
+        # Nombre de cobertura
+        if cod_tasa == 20:
+            cobertura = "MUERTE"
+            tipo = "BÁSICO"
+        elif cod_tasa == 14:
+            cobertura = "MUERTE ACCID. Y DESMEMBRAMIENTO"
+            tipo = "MAD"
+        elif cod_tasa == 18:
+            cobertura = "INVALIDEZ TOTAL Y PERMANENTE"
+            tipo = "ITP"
+        else:
+            cobertura = f"CÓD. {cod_tasa}"
+            tipo = "-"
+        resultados.append({
+            'Cobertura': cobertura,
+            'Tipo': tipo,
+            'Valor Asegurado': f"$ {valor_asegurado:,.0f}".replace(",", "."),
+            'Tasa Comercial': f"{tasa_comercial:.5f}",
+            'Prima Anual': f"$ {prima_comercial_anual:,.0f}".replace(",", "."),
+            'Prima Fraccionada': f"$ {prima_comercial_fracc:,.0f}".replace(",", ".")
+        })
+    # Agregar fila de total
+    if resultados:
+        resultados.append({
+            'Cobertura': 'TOTAL PRIMA EMITIDA',
+            'Tipo': '',
+            'Valor Asegurado': '',
+            'Tasa Comercial': '',
+            'Prima Anual': '',
+            'Prima Fraccionada': f"$ {total_prima_emitida:,.0f}".replace(",", ".")
+        })
+    return resultados
+
 # --- Cargar datos de Excel ---
 @st.cache_data
 def cargar_tabla():
@@ -141,7 +241,7 @@ st.sidebar.title("Parámetros de Cálculo")
 t_logo = st.sidebar.empty()
 # t_logo.image("logo.png", width=150)  # Descomentar cuando tengas el logo
 
-edad = st.sidebar.number_input("Edad actual", min_value=18, max_value=99, value=35)
+edad = st.sidebar.number_input("Edad actual", min_value=18, max_value=65, value=35)
 sexo = st.sidebar.radio("Sexo", ["Masculino", "Femenino"])
 valor_asegurado = st.sidebar.number_input("Valor asegurado", min_value=1000000, step=1000000, value=10000000)
 
@@ -187,27 +287,29 @@ if edad >= plazo_producto:
 else:
     total_plazo = plazo_producto - edad
 
+# Validación de edad máxima
+edad_valida = edad <= 65
+
+if not edad_valida:
+    st.warning('La edad actual no puede ser mayor a 65 años. Por favor, ingresa una edad válida.')
+
 # --- Panel principal ---
 st.title("Calculadora de Prima de Seguro de Vida")
 st.markdown("""
-#### Calcula prima de vida 
 """)
 
-if st.button('Calcular Prima'):
-    resultados = calcular_prima(
+if st.button('Calcular Prima', disabled=not edad_valida):
+    resultados = calcular_prima_multi(
         edad, sexo, valor_asegurado, inflacion, interes_tecnico,
         gastos_iniciales, gastos_administrativos, comision_anio_1, comision_anio_n,
-        forma_pago, cnt_plazo_pago, testadistica_vida, total_plazo
+        forma_pago, cnt_plazo_pago, testadistica_vida, total_plazo, [20, 14, 18]
     )
-    if 'error' in resultados:
-        st.error(resultados['error'])
+    if not resultados:
+        st.error('No se pudo calcular la prima para las coberturas seleccionadas.')
     else:
         st.success('¡Cálculo realizado!')
         st.metric('Plazo del seguro (años)', total_plazo)
-        st.metric('Tasa comercial nivelada', f"{resultados['tasa_comercial']:.5f}")
-        st.metric('Tasa comercial fraccionada', f"{resultados['tasa_comercial_fracc']:.5f}")
-        st.metric('Prima anual', f"$ {resultados['prima_comercial_anual']:,.0f}".replace(",", "."))
-        st.metric('Prima fraccionada', f"$ {resultados['prima_comercial_fracc']:,.0f}".replace(",", "."))
+        st.dataframe(pd.DataFrame(resultados), use_container_width=True)
 
 # --- CSS personalizado ---
 st.markdown(
